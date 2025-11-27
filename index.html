@@ -41,15 +41,15 @@
         } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
 
         // ============================================================
-        // ✅ ใส่กุญแจบ้านให้แล้วครับ (พร้อมใช้งานทันที)
+        // ✅ ใส่กุญแจบ้านของโปรเจกต์ nuizyccexpense ให้เรียบร้อยครับ
         // ============================================================
         const firebaseConfig = {
-              apiKey: "AIzaSyB4faYkmxMBxYyM9wNUPZa_p1qUaGJQXDk",
-              authDomain: "nuizyccexpense-f77da.firebaseapp.com",
-              projectId: "nuizyccexpense-f77da",
-              storageBucket: "nuizyccexpense-f77da.firebasestorage.app",
-              messagingSenderId: "92226341316",
-              appId: "1:92226341316:web:1e79f922cb2de31363fc91"
+            apiKey: "AIzaSyB4faYkmxMBxYyM9wNUPZa_p1qUaGJQXDk",
+            authDomain: "nuizyccexpense-f77da.firebaseapp.com",
+            projectId: "nuizyccexpense-f77da",
+            storageBucket: "nuizyccexpense-f77da.firebasestorage.app",
+            messagingSenderId: "92226341316",
+            appId: "1:92226341316:web:1e79f922cb2de31363fc91"
         };
         // ============================================================
 
@@ -120,9 +120,11 @@
             useEffect(() => {
                 if (!user) { setCards([]); setTransactions([]); return; }
                 setIsLoadingData(true);
+                // Listen to Cards
                 const unsubCards = onSnapshot(collection(db, 'users', user.uid, 'cards'), (snapshot) => {
                     setCards(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                 });
+                // Listen to Transactions
                 const unsubTx = onSnapshot(collection(db, 'users', user.uid, 'transactions'), (snapshot) => {
                     setTransactions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                     setIsLoadingData(false);
@@ -397,5 +399,4 @@
         root.render(<CloudCreditCardManager />);
     </script>
 </body>
-
 </html>
