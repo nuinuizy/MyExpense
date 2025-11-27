@@ -35,7 +35,7 @@
         // --- Firebase Imports ---
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
         import { 
-            getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut 
+            getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signOut 
         } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js';
         import { 
             getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot 
@@ -82,6 +82,7 @@
                 danger: "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200",
                 success: "bg-green-600 text-white hover:bg-green-700 shadow-md",
                 google: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm",
+                guest: "bg-slate-200 text-slate-700 hover:bg-slate-300",
                 income: "bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200",
                 expense: "bg-red-100 text-red-800 border border-red-200 hover:bg-red-200",
                 activeIncome: "bg-emerald-700 text-white shadow-md ring-2 ring-emerald-300",
@@ -206,16 +207,20 @@
                     if (!grouped[k]) grouped[k] = { name: k, sort: d.getTime(), income: 0, expense: 0, totalStack: 0 }; 
                     const amt = parseFloat(tx.amount);
                     
+                    const isIncome = tx.type === 'income';
+                    const isExpense = tx.type === 'expense' || !tx.type;
+
                     if (historyViewMode === 'total') {
-                        if (tx.type === 'income') grouped[k].income += amt; else grouped[k].expense += amt;
+                        if (isIncome) grouped[k].income += amt; else grouped[k].expense += amt;
                     } else {
                         const cat = categories.find(c => c.id === tx.categoryId);
                         const catName = cat ? cat.name : 'General';
-                        if (historyViewMode === 'expense_breakdown' && tx.type === 'expense') {
+                        
+                        if (historyViewMode === 'expense_breakdown' && isExpense) {
                             if (!grouped[k][catName]) grouped[k][catName] = 0;
                             grouped[k][catName] += amt;
                             grouped[k].totalStack += amt; 
-                        } else if (historyViewMode === 'income_breakdown' && tx.type === 'income') {
+                        } else if (historyViewMode === 'income_breakdown' && isIncome) {
                             if (!grouped[k][catName]) grouped[k][catName] = 0;
                             grouped[k][catName] += amt;
                             grouped[k].totalStack += amt; 
@@ -230,19 +235,15 @@
                 const txs = transactions.filter(tx => { const d = new Date(tx.date); return d >= start && d <= end; });
                 return txs.reduce((acc, i) => ({ 
                     income: acc.income + (i.type==='income'?parseFloat(i.amount):0), 
-                    expense: acc.expense + (i.type==='expense'?parseFloat(i.amount):0) 
+                    expense: acc.expense + (i.type==='expense'||!i.type?parseFloat(i.amount):0) 
                 }), { income: 0, expense: 0 })
             }, [transactions, historyRange, historyStart, historyEnd]);
 
             // Handlers
             const handleLogin = async (provider) => { 
-                setLoginError(''); // Clear previous error
-                try { 
-                    await signInWithPopup(auth, new GoogleAuthProvider()); 
-                } catch(e) { 
-                    console.error("Login Error:", e);
-                    setLoginError(e.message); // Show error on screen
-                } 
+                setLoginError('');
+                try { await signInWithPopup(auth, new GoogleAuthProvider()); } 
+                catch(e) { console.error(e); setLoginError(e.message); } 
             };
 
             const handleLogout = async () => { if(confirm('Logout?')) await signOut(auth); };
@@ -252,36 +253,50 @@
             const handleDeleteCat = async (id, e) => { if(e) e.stopPropagation(); if(!user) return; try { await deleteDoc(doc(db,'users',user.uid,'categories',id)); } catch(err) { console.error(err); } };
             const handleAddTx = async (e) => { e.preventDefault(); if(!user) return; try { await addDoc(collection(db,'users',user.uid,'transactions'), {...newTx, createdAt:new Date().toISOString()}); setNewTx({...newTx, amount:'', note:''}); } catch(e){ alert(e.message); } };
             const handleDeleteTx = async (id, e) => { if(e) e.stopPropagation(); if(user) await deleteDoc(doc(db,'users',user.uid,'transactions',id)); };
-            const exportExcel = () => {
+
+            // --- Export to Excel (Real .xlsx with SheetJS) ---
+            const exportExcel = async () => {
                 setIsExporting(true);
-                const content = `
-                    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-                    <head><meta charset="UTF-8"></head><body>
-                    <h2 style="color: #1e3a8a;">Smart Income/Expense summary</h2>
-                    <table border="1" style="border-collapse: collapse;">
-                        <thead>
-                            <tr style="background-color: #dbeafe; color: #1e3a8a; font-weight: bold;">
-                                <th style="padding: 10px;">Date</th><th style="padding: 10px;">Time</th><th style="padding: 10px;">Type</th><th style="padding: 10px;">Account</th><th style="padding: 10px;">Category</th><th style="padding: 10px;">Note</th><th style="padding: 10px;">Income</th><th style="padding: 10px;">Expense</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${transactions.map(tx => {
-                                const card = cards.find(c => c.id === tx.cardId);
-                                const cat = categories.find(c => c.id === tx.categoryId);
-                                const isInc = tx.type === 'income';
-                                return `<tr>
-                                    <td>${tx.date}</td><td>${tx.time}</td><td>${isInc?'Income':'Expense'}</td>
-                                    <td>${card?.name || 'Cash'}</td><td>${cat?.name || '-'}</td><td>${tx.note || ''}</td>
-                                    <td style="color: green;">${isInc ? tx.amount : 0}</td><td style="color: red;">${!isInc ? tx.amount : 0}</td>
-                                </tr>`;
-                            }).join('')}
-                        </tbody>
-                    </table></body></html>
-                `;
-                const blob = new Blob([content], {type: 'application/vnd.ms-excel'});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a'); a.href = url; a.download = `Smart_Summary_${new Date().toISOString().split('T')[0]}.xls`;
-                a.click(); setIsExporting(false);
+                try {
+                    // Load SheetJS dynamically if not already present
+                    if (!window.XLSX) {
+                        const script = document.createElement('script');
+                        script.src = "https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js";
+                        document.body.appendChild(script);
+                        await new Promise(resolve => script.onload = resolve);
+                    }
+                    const XLSX = window.XLSX;
+
+                    const data = transactions.map(tx => {
+                        const card = cards.find(c => c.id === tx.cardId);
+                        const cat = categories.find(c => c.id === tx.categoryId);
+                        const isInc = tx.type === 'income';
+                        return {
+                            'Date': tx.date,
+                            'Time': tx.time,
+                            'Type': isInc ? 'Income' : 'Expense',
+                            'Account': card ? card.name : 'Cash',
+                            'Category': cat ? cat.name : '-',
+                            'Note': tx.note || '',
+                            'Income': isInc ? parseFloat(tx.amount) : 0,
+                            'Expense': !isInc ? parseFloat(tx.amount) : 0
+                        };
+                    });
+
+                    const ws = XLSX.utils.json_to_sheet(data);
+                    const wscols = [{wch:12}, {wch:8}, {wch:10}, {wch:20}, {wch:20}, {wch:30}, {wch:12}, {wch:12}];
+                    ws['!cols'] = wscols;
+
+                    const wb = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb, ws, "Transactions");
+                    XLSX.writeFile(wb, `Smart_Expense_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+                } catch (err) {
+                    console.error(err);
+                    alert("Export failed: " + err.message);
+                } finally {
+                    setIsExporting(false);
+                }
             };
 
             // Renders
@@ -434,7 +449,7 @@
 
             return (
                 <div className="min-h-screen pb-20 md:pb-0">
-                    <header className="bg-white shadow-sm sticky top-0 z-10"><div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center"><h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><DollarSign/> Smart Income / Expense <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded-full">Cloud 5.1.1</span></h1><nav className="hidden md:flex gap-1 bg-slate-100 p-1 rounded-lg">{['dashboard','history','categories','cards','settings'].map(t=><button key={t} onClick={()=>setActiveTab(t)} className={`px-3 py-2 rounded-md text-sm capitalize ${activeTab===t?'bg-white text-blue-700 shadow-sm font-bold':'text-slate-500'}`}>{t}</button>)}</nav></div></header>
+                    <header className="bg-white shadow-sm sticky top-0 z-10"><div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center"><h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><DollarSign/> Smart Income / Expense <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded-full">Cloud 5.3</span></h1><nav className="hidden md:flex gap-1 bg-slate-100 p-1 rounded-lg">{['dashboard','history','categories','cards','settings'].map(t=><button key={t} onClick={()=>setActiveTab(t)} className={`px-3 py-2 rounded-md text-sm capitalize ${activeTab===t?'bg-white text-blue-700 shadow-sm font-bold':'text-slate-500'}`}>{t}</button>)}</nav></div></header>
                     <main className="max-w-6xl mx-auto px-4 py-6">{activeTab==='dashboard'&&renderDashboard()}{activeTab==='history'&&renderHistory()}{activeTab==='categories'&&renderCategories()}{activeTab==='cards'&&renderCards()}{activeTab==='settings'&&renderSettings()}</main>
                     <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 z-20 safe-area-bottom overflow-x-auto">{['dashboard','history','categories','cards','settings'].map(t=><button key={t} onClick={()=>setActiveTab(t)} className={`flex flex-col items-center p-2 min-w-[60px] ${activeTab===t?'text-blue-600':'text-slate-400'}`}>{t==='dashboard'?<PieChart size={24}/>:t==='history'?<History size={24}/>:t==='categories'?<Tags size={24}/>:t==='cards'?<CreditCard size={24}/>:<Bell size={24}/>}<span className="text-[10px] mt-1 capitalize">{t}</span></button>)}</div>
                 </div>
