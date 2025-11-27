@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Expense - Cloud Edition</title>
+    <title>Smart Income / Expense</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React & Libraries (Load via CDN) -->
@@ -12,19 +12,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Sarabun', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-900">
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        // --- Imports (ดึงมาจาก Cloud โดยตรง) ---
         import React, { useState, useEffect, useMemo } from 'https://esm.sh/react@18.2.0';
         import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
         import { 
             CreditCard, Plus, Trash2, PieChart, List, Bell, DollarSign, 
             History, TrendingUp, Calendar, Filter, X, FileSpreadsheet, 
-            Download, Loader, Cloud, LogOut, User 
+            Download, Loader, Cloud, LogOut, User, Tags, ArrowUpCircle, ArrowDownCircle, Wallet, Layers
         } from 'https://esm.sh/lucide-react@0.344.0';
         import { 
             BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -41,7 +42,7 @@
         } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
 
         // ============================================================
-        // ✅ ใส่กุญแจบ้านของโปรเจกต์ nuizyccexpense ให้เรียบร้อยครับ
+        // ✅ Config (Production)
         // ============================================================
         const firebaseConfig = {
             apiKey: "AIzaSyB4faYkmxMBxYyM9wNUPZa_p1qUaGJQXDk",
@@ -51,45 +52,54 @@
             messagingSenderId: "92226341316",
             appId: "1:92226341316:web:1e79f922cb2de31363fc91"
         };
-        // ============================================================
 
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // --- Helper Components ---
-        const Card = ({ children, className = "" }) => (
-            <div className={`bg-white rounded-xl shadow-sm border border-slate-200 ${className}`}>
-                {children}
-            </div>
-        );
+        // --- Utils ---
+        const getColorForCategory = (name) => {
+            if (!name || name === 'General') return '#94a3b8';
+            const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#64748b'];
+            let hash = 0;
+            for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+            return colors[Math.abs(hash) % colors.length];
+        };
 
+        const formatCurrencyShort = (value) => {
+            if (!value) return '';
+            if (value >= 1000) return `฿${(value / 1000).toFixed(1)}k`;
+            return `฿${value.toLocaleString()}`;
+        };
+
+        // --- Components ---
+        const Card = ({ children, className = "" }) => <div className={`bg-white rounded-xl shadow-sm border border-slate-200 ${className}`}>{children}</div>;
         const Button = ({ children, onClick, variant = "primary", className = "", type="button", disabled=false }) => {
-            const baseStyle = "px-4 py-3 rounded-lg font-bold text-base transition-all duration-200 flex items-center justify-center gap-2 select-none active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed";
+            const base = "px-4 py-3 rounded-lg font-bold text-base transition-all duration-200 flex items-center justify-center gap-2 select-none active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed";
             const variants = {
                 primary: "bg-blue-600 text-white hover:bg-blue-700 shadow-md",
                 secondary: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50",
                 danger: "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200",
                 success: "bg-green-600 text-white hover:bg-green-700 shadow-md",
-                google: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm"
+                google: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm",
+                income: "bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200",
+                expense: "bg-red-100 text-red-800 border border-red-200 hover:bg-red-200",
+                activeIncome: "bg-emerald-700 text-white shadow-md ring-2 ring-emerald-300",
+                activeExpense: "bg-red-700 text-white shadow-md ring-2 ring-red-300"
             };
-            return (
-                <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>
-                    {children}
-                </button>
-            );
+            return <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>{children}</button>;
         };
 
-        // --- Main App Component ---
+        // --- Main App ---
         function CloudCreditCardManager() {
             const [user, setUser] = useState(null);
             const [activeTab, setActiveTab] = useState('dashboard');
             const [isExporting, setIsExporting] = useState(false);
             const [isLoadingData, setIsLoadingData] = useState(false);
 
-            // Data State
+            // Data
             const [cards, setCards] = useState([]);
+            const [categories, setCategories] = useState([]); 
             const [transactions, setTransactions] = useState([]);
             const [lineToken, setLineToken] = useState(() => localStorage.getItem('cc_line_token') || '');
 
@@ -98,165 +108,187 @@
             const [customStart, setCustomStart] = useState('');
             const [customEnd, setCustomEnd] = useState('');
             const [dashboardCardFilter, setDashboardCardFilter] = useState('all');
+            const [dashboardCategoryFilter, setDashboardCategoryFilter] = useState('all');
+            const [analysisGroupBy, setAnalysisGroupBy] = useState('category'); 
+            const [analysisViewType, setAnalysisViewType] = useState('combined'); 
+
             const [historyRange, setHistoryRange] = useState('year');
-            const [historyCardFilter, setHistoryCardFilter] = useState('all');
             const [historyStart, setHistoryStart] = useState('');
             const [historyEnd, setHistoryEnd] = useState('');
+            const [historyViewMode, setHistoryViewMode] = useState('total'); 
 
             // Forms
             const [newCard, setNewCard] = useState({ name: '', bank: '', number: '' });
+            const [newCategory, setNewCategory] = useState({ name: '' });
             const [newTx, setNewTx] = useState({ 
-                amount: '', date: new Date().toISOString().split('T')[0], 
-                time: new Date().toTimeString().slice(0,5), cardId: '', note: '' 
+                amount: '', type: 'expense', date: new Date().toISOString().split('T')[0], 
+                time: new Date().toTimeString().slice(0,5), cardId: '', categoryId: '', note: '' 
             });
 
-            // Auth Listener
+            // Effects
+            useEffect(() => { const unsub = onAuthStateChanged(auth, setUser); return () => unsub(); }, []);
             useEffect(() => {
-                const unsubscribe = onAuthStateChanged(auth, setUser);
-                return () => unsubscribe();
-            }, []);
-
-            // Data Sync
-            useEffect(() => {
-                if (!user) { setCards([]); setTransactions([]); return; }
+                if (!user) { setCards([]); setCategories([]); setTransactions([]); return; }
                 setIsLoadingData(true);
-                // Listen to Cards
-                const unsubCards = onSnapshot(collection(db, 'users', user.uid, 'cards'), (snapshot) => {
-                    setCards(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                });
-                // Listen to Transactions
-                const unsubTx = onSnapshot(collection(db, 'users', user.uid, 'transactions'), (snapshot) => {
-                    setTransactions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                    setIsLoadingData(false);
-                });
-                return () => { unsubCards(); unsubTx(); };
+                const unsub1 = onSnapshot(collection(db, 'users', user.uid, 'cards'), s => { setCards(s.docs.map(d=>({id:d.id,...d.data()}))); if(s.empty) seedCards(user.uid); });
+                const unsub2 = onSnapshot(collection(db, 'users', user.uid, 'categories'), s => { setCategories(s.docs.map(d=>({id:d.id,...d.data()}))); if(s.empty) seedCats(user.uid); });
+                const unsub3 = onSnapshot(collection(db, 'users', user.uid, 'transactions'), s => { setTransactions(s.docs.map(d=>({id:d.id,...d.data()}))); setIsLoadingData(false); });
+                return () => { unsub1(); unsub2(); unsub3(); };
             }, [user]);
+            useEffect(() => localStorage.setItem('cc_line_token', lineToken), [lineToken]);
 
-            useEffect(() => { localStorage.setItem('cc_line_token', lineToken); }, [lineToken]);
+            const seedCards = async (uid) => { try { await addDoc(collection(db,'users',uid,'cards'), {name:'Cash',number:'',color:'#64748b',createdAt:new Date().toISOString()}); } catch(e){} };
+            const seedCats = async (uid) => { try { await addDoc(collection(db,'users',uid,'categories'), {name:'Food',createdAt:new Date().toISOString()}); await addDoc(collection(db,'users',uid,'categories'), {name:'Travel',createdAt:new Date().toISOString()}); } catch(e){} };
 
-            // Logic Helpers
+            // Logic
             const getDateRange = (rangeType, customS, customE) => {
-                const now = new Date();
-                let start = new Date(now), end = new Date(now);
+                const now = new Date(); let start = new Date(now), end = new Date(now);
                 start.setHours(0,0,0,0); end.setHours(23,59,59,999);
-
-                if (rangeType === 'week') {
-                    const day = now.getDay() || 7; if(day!==1) start.setHours(-24*(day-1));
-                    end = new Date(start); end.setDate(start.getDate()+6); end.setHours(23,59,59,999);
-                } else if (rangeType === 'month') {
-                    start.setDate(1); end = new Date(now.getFullYear(), now.getMonth()+1, 0); end.setHours(23,59,59,999);
-                } else if (rangeType === 'year') {
-                    start.setMonth(0, 1); end = new Date(now.getFullYear(), 11, 31); end.setHours(23,59,59,999);
-                } else if (rangeType === 'custom' && customS && customE) {
-                    start = new Date(customS); start.setHours(0,0,0,0);
-                    end = new Date(customE); end.setHours(23,59,59,999);
-                }
+                if (rangeType === 'week') { const day = now.getDay()||7; if(day!==1) start.setHours(-24*(day-1)); end = new Date(start); end.setDate(start.getDate()+6); end.setHours(23,59,59,999); }
+                else if (rangeType === 'month') { start.setDate(1); end = new Date(now.getFullYear(), now.getMonth()+1, 0); end.setHours(23,59,59,999); }
+                else if (rangeType === 'year') { start.setMonth(0, 1); end = new Date(now.getFullYear(), 11, 31); end.setHours(23,59,59,999); }
+                else if (rangeType === 'custom' && customS && customE) { start = new Date(customS); start.setHours(0,0,0,0); end = new Date(customE); end.setHours(23,59,59,999); }
                 return { start, end };
             };
 
-            const filteredTransactions = useMemo(() => {
+            const filteredTx = useMemo(() => {
                 const { start, end } = getDateRange(dateRange, customStart, customEnd);
                 return transactions.filter(tx => {
-                    const txDate = new Date(tx.date);
-                    return txDate >= start && txDate <= end && (dashboardCardFilter === 'all' || tx.cardId === dashboardCardFilter);
+                    const d = new Date(tx.date);
+                    return d >= start && d <= end && (dashboardCardFilter === 'all' || tx.cardId === dashboardCardFilter) && (dashboardCategoryFilter === 'all' || tx.categoryId === dashboardCategoryFilter);
                 }).sort((a, b) => new Date(b.date+'T'+b.time) - new Date(a.date+'T'+a.time));
-            }, [transactions, dateRange, customStart, customEnd, dashboardCardFilter]);
+            }, [transactions, dateRange, customStart, customEnd, dashboardCardFilter, dashboardCategoryFilter]);
 
-            const totalExpense = useMemo(() => filteredTransactions.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0), [filteredTransactions]);
+            const summary = useMemo(() => filteredTx.reduce((acc, tx) => {
+                const amt = parseFloat(tx.amount || 0);
+                if (tx.type === 'income') acc.income += amt; else acc.expense += amt;
+                return acc;
+            }, { income: 0, expense: 0 }), [filteredTx]);
             
+            // Dashboard Chart
             const dashboardChartData = useMemo(() => {
-                const data = {}; cards.forEach(c => data[c.name] = 0);
-                filteredTransactions.forEach(tx => {
-                    const card = cards.find(c => c.id === tx.cardId);
-                    if (card) data[card.name] = (data[card.name] || 0) + parseFloat(tx.amount);
+                const data = {};
+                filteredTx.forEach(tx => {
+                    let key, name;
+                    if (analysisGroupBy === 'category') {
+                        const cat = categories.find(c => c.id === tx.categoryId);
+                        key = tx.categoryId || 'uncategorized';
+                        name = cat ? cat.name : 'General';
+                    } else { 
+                        const card = cards.find(c => c.id === tx.cardId);
+                        key = tx.cardId || 'cash';
+                        name = card ? card.name : 'Cash';
+                    }
+                    if (!data[key]) data[key] = { name: name, income: 0, expense: 0 };
+                    if (tx.type === 'income') data[key].income += parseFloat(tx.amount);
+                    else data[key].expense += parseFloat(tx.amount);
                 });
-                return Object.keys(data).map(key => ({ name: key, amount: data[key], fill: cards.find(c => c.name === key)?.color || '#cbd5e1' })).filter(i => i.amount > 0);
-            }, [filteredTransactions, cards]);
+                let result = Object.values(data);
+                if (analysisViewType === 'income') result = result.filter(d => d.income > 0).sort((a,b) => b.income - a.income);
+                else if (analysisViewType === 'expense') result = result.filter(d => d.expense > 0).sort((a,b) => b.expense - a.expense);
+                else result = result.filter(d => d.income > 0 || d.expense > 0);
+                return result;
+            }, [filteredTx, cards, categories, analysisGroupBy, analysisViewType]);
 
+            // History Data
             const historyData = useMemo(() => {
                 const { start, end } = getDateRange(historyRange, historyStart, historyEnd);
-                const filtered = transactions.filter(tx => {
-                    const txDate = new Date(tx.date);
-                    return txDate >= start && txDate <= end && (historyCardFilter === 'all' || tx.cardId === historyCardFilter);
-                });
+                const txs = transactions.filter(tx => { const d = new Date(tx.date); return d >= start && d <= end; });
                 const grouped = {};
-                filtered.forEach(tx => {
-                    const dateObj = new Date(tx.date);
-                    let key, sortKey;
-                    if (historyRange === 'year') { key = dateObj.toLocaleDateString('en-US',{month:'short'}); sortKey = dateObj.getMonth(); }
-                    else { key = dateObj.toLocaleDateString('th-TH',{day:'numeric',month:'short'}); sortKey = dateObj.getTime(); }
+                
+                txs.forEach(tx => {
+                    const d = new Date(tx.date);
+                    let k = historyRange === 'year' 
+                        ? d.toLocaleDateString(undefined, {month:'short', year:'2-digit'}) 
+                        : d.toLocaleDateString(undefined, {day:'numeric', month:'short'});
                     
-                    if (!grouped[key]) grouped[key] = { name: key, sortKey, total: 0 };
-                    const card = cards.find(c => c.id === tx.cardId);
-                    if (card) {
-                        grouped[key][card.name] = (grouped[key][card.name] || 0) + parseFloat(tx.amount);
-                        grouped[key].total += parseFloat(tx.amount);
+                    if (!grouped[k]) grouped[k] = { name: k, sort: d.getTime(), income: 0, expense: 0, totalStack: 0 }; 
+                    const amt = parseFloat(tx.amount);
+                    
+                    if (historyViewMode === 'total') {
+                        if (tx.type === 'income') grouped[k].income += amt; else grouped[k].expense += amt;
+                    } else {
+                        const cat = categories.find(c => c.id === tx.categoryId);
+                        const catName = cat ? cat.name : 'General';
+                        if (historyViewMode === 'expense_breakdown' && tx.type === 'expense') {
+                            if (!grouped[k][catName]) grouped[k][catName] = 0;
+                            grouped[k][catName] += amt;
+                            grouped[k].totalStack += amt; 
+                        } else if (historyViewMode === 'income_breakdown' && tx.type === 'income') {
+                            if (!grouped[k][catName]) grouped[k][catName] = 0;
+                            grouped[k][catName] += amt;
+                            grouped[k].totalStack += amt; 
+                        }
                     }
                 });
-                return Object.values(grouped).sort((a,b) => a.sortKey - b.sortKey);
-            }, [transactions, historyRange, historyCardFilter, historyStart, historyEnd, cards]);
+                return Object.values(grouped).sort((a,b) => a.sort - b.sort);
+            }, [transactions, historyRange, historyStart, historyEnd, historyViewMode, categories]);
 
-            const historyTotal = useMemo(() => historyData.reduce((sum, i) => sum + i.total, 0), [historyData]);
+            const historyTotal = useMemo(() => {
+                const { start, end } = getDateRange(historyRange, historyStart, historyEnd);
+                const txs = transactions.filter(tx => { const d = new Date(tx.date); return d >= start && d <= end; });
+                return txs.reduce((acc, i) => ({ 
+                    income: acc.income + (i.type==='income'?parseFloat(i.amount):0), 
+                    expense: acc.expense + (i.type==='expense'?parseFloat(i.amount):0) 
+                }), { income: 0, expense: 0 })
+            }, [transactions, historyRange, historyStart, historyEnd]);
 
             // Handlers
-            const handleGoogleLogin = async () => {
-                try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (err) { alert(err.message); }
-            };
+            const handleGoogleLogin = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch(e) { alert(e.message); } };
             const handleLogout = async () => { if(confirm('Logout?')) await signOut(auth); };
-            
-            const handleAddCard = async (e) => {
-                e.preventDefault(); if(!user) return;
-                const colors = ['#1e40af', '#0f766e', '#b91c1c', '#a21caf', '#c2410c', '#4338ca'];
-                try { await addDoc(collection(db, 'users', user.uid, 'cards'), { ...newCard, color: colors[Math.floor(Math.random()*colors.length)], createdAt: new Date().toISOString() }); setNewCard({name:'',bank:'',number:''}); } catch(e){ alert(e.message); }
-            };
-            const handleDeleteCard = async (id) => { if(user && confirm('ลบบัตร?')) await deleteDoc(doc(db, 'users', user.uid, 'cards', id)); };
-            
-            const handleAddTx = async (e) => {
-                e.preventDefault(); if(!user) return;
-                try { 
-                    const txData = { ...newTx, createdAt: new Date().toISOString() };
-                    await addDoc(collection(db, 'users', user.uid, 'transactions'), txData);
-                    setNewTx({...newTx, amount:'', note:''});
-                } catch(e){ alert(e.message); }
-            };
-            const handleDeleteTx = async (id) => { if(user) await deleteDoc(doc(db, 'users', user.uid, 'transactions', id)); };
-
-            const exportToExcel = async () => {
+            const handleAddCard = async (e) => { e.preventDefault(); if(!user) return; try { await addDoc(collection(db,'users',user.uid,'cards'), {...newCard, color:['#1e40af','#0f766e','#b91c1c','#a21caf'][Math.floor(Math.random()*4)], createdAt:new Date().toISOString()}); setNewCard({name:'',bank:'',number:''}); } catch(e){ alert(e.message); } };
+            const handleDeleteCard = async (id, e) => { if(e) e.stopPropagation(); if(!user) return; try { await deleteDoc(doc(db,'users',user.uid,'cards',id)); } catch(err) { console.error(err); } };
+            const handleAddCat = async (e) => { e.preventDefault(); if(!user) return; try { await addDoc(collection(db,'users',user.uid,'categories'), {...newCategory, createdAt:new Date().toISOString()}); setNewCategory({name:''}); } catch(e){ alert(e.message); } };
+            const handleDeleteCat = async (id, e) => { if(e) e.stopPropagation(); if(!user) return; try { await deleteDoc(doc(db,'users',user.uid,'categories',id)); } catch(err) { console.error(err); } };
+            const handleAddTx = async (e) => { e.preventDefault(); if(!user) return; try { await addDoc(collection(db,'users',user.uid,'transactions'), {...newTx, createdAt:new Date().toISOString()}); setNewTx({...newTx, amount:'', note:''}); } catch(e){ alert(e.message); } };
+            const handleDeleteTx = async (id, e) => { if(e) e.stopPropagation(); if(user) await deleteDoc(doc(db,'users',user.uid,'transactions',id)); };
+            const exportExcel = () => {
                 setIsExporting(true);
-                if (!window.XLSX) {
-                    const script = document.createElement('script');
-                    script.src = "https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js";
-                    document.body.appendChild(script);
-                    await new Promise(resolve => script.onload = resolve);
-                }
-                const XLSX = window.XLSX;
-                const data = transactions.map(tx => {
-                    const card = cards.find(c => c.id === tx.cardId);
-                    return { 'Date': tx.date, 'Time': tx.time, 'Card': card?.name||'N/A', 'Number': card?.number||'', 'Note': tx.note, 'Amount': parseFloat(tx.amount) };
-                });
-                const ws = XLSX.utils.json_to_sheet(data);
-                ws['!cols'] = [{wch:12}, {wch:8}, {wch:20}, {wch:15}, {wch:30}, {wch:12}];
-                const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Tx");
-                XLSX.writeFile(wb, `Expense_${new Date().toISOString().split('T')[0]}.xlsx`);
-                setIsExporting(false);
+                const content = `
+                    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+                    <head><meta charset="UTF-8"></head><body>
+                    <h2 style="color: #1e3a8a;">Smart Income/Expense summary</h2>
+                    <table border="1" style="border-collapse: collapse;">
+                        <thead>
+                            <tr style="background-color: #dbeafe; color: #1e3a8a; font-weight: bold;">
+                                <th style="padding: 10px;">Date</th><th style="padding: 10px;">Time</th><th style="padding: 10px;">Type</th><th style="padding: 10px;">Account</th><th style="padding: 10px;">Category</th><th style="padding: 10px;">Note</th><th style="padding: 10px;">Income</th><th style="padding: 10px;">Expense</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${transactions.map(tx => {
+                                const card = cards.find(c => c.id === tx.cardId);
+                                const cat = categories.find(c => c.id === tx.categoryId);
+                                const isInc = tx.type === 'income';
+                                return `<tr>
+                                    <td>${tx.date}</td><td>${tx.time}</td><td>${isInc?'Income':'Expense'}</td>
+                                    <td>${card?.name || 'Cash'}</td><td>${cat?.name || '-'}</td><td>${tx.note || ''}</td>
+                                    <td style="color: green;">${isInc ? tx.amount : 0}</td><td style="color: red;">${!isInc ? tx.amount : 0}</td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table></body></html>
+                `;
+                const blob = new Blob([content], {type: 'application/vnd.ms-excel'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = `Smart_Summary_${new Date().toISOString().split('T')[0]}.xls`;
+                a.click(); setIsExporting(false);
             };
 
             // Renders
             const renderDashboard = () => (
                 <div className="space-y-6">
-                    <div className="flex justify-end items-center gap-2 text-xs text-slate-400">
-                        {isLoadingData ? <Loader size={12} className="animate-spin"/> : <Cloud size={12}/>}
-                        {isLoadingData ? 'Syncing...' : 'Cloud Synced'}
-                    </div>
+                    <div className="flex justify-end items-center gap-2 text-xs text-slate-400">{isLoadingData ? <Loader size={12} className="animate-spin"/> : <Cloud size={12}/>} {isLoadingData?'Syncing...':'Cloud Synced'}</div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <Card className="p-6 bg-gradient-to-br from-blue-600 to-blue-800 text-white border-none">
-                            <p className="text-blue-100 text-sm mb-1">Total Expense</p>
-                            <h2 className="text-4xl font-bold">฿{totalExpense.toLocaleString()}</h2>
+                        <Card className="p-6 bg-gradient-to-br from-blue-600 to-blue-800 text-white border-none relative overflow-hidden">
+                            <div className="relative z-10"><p className="text-blue-100 text-sm mb-1 flex items-center gap-2"><Wallet size={16}/> Net Balance</p><h2 className="text-4xl font-bold">฿{(summary.income - summary.expense).toLocaleString()}</h2></div>
+                            <div className="absolute right-0 bottom-0 opacity-10"><DollarSign size={120}/></div>
                         </Card>
+                        <div className="grid grid-rows-2 gap-4">
+                            <Card className="px-4 py-3 flex justify-between items-center bg-emerald-50 border-emerald-100"><div><p className="text-xs text-emerald-700 font-bold uppercase">Total Income</p><h3 className="text-xl font-bold text-emerald-800">+฿{summary.income.toLocaleString()}</h3></div><ArrowUpCircle className="text-emerald-600" size={28}/></Card>
+                            <Card className="px-4 py-3 flex justify-between items-center bg-red-50 border-red-100"><div><p className="text-xs text-red-700 font-bold uppercase">Total Expense</p><h3 className="text-xl font-bold text-red-800">-฿{summary.expense.toLocaleString()}</h3></div><ArrowDownCircle className="text-red-600" size={28}/></Card>
+                        </div>
                         <Card className="p-4 flex flex-col justify-center gap-3">
-                            <div className="flex gap-2 text-xs">
-                                {['week','month','year'].map(r => <button key={r} onClick={()=>setDateRange(r)} className={`flex-1 py-2 rounded capitalize ${dateRange===r?'bg-blue-100 text-blue-700 font-bold':'bg-slate-100'}`}>{r}</button>)}
-                            </div>
+                            <div className="flex gap-2 text-xs">{['week','month','year'].map(r=><button key={r} onClick={()=>setDateRange(r)} className={`flex-1 py-2 rounded capitalize ${dateRange===r?'bg-blue-100 text-blue-700 font-bold':'bg-slate-100'}`}>{r}</button>)}</div>
                             {dateRange==='custom' && <div className="flex gap-2"><input type="date" className="flex-1 p-1 border rounded text-xs" onChange={e=>setCustomStart(e.target.value)}/><input type="date" className="flex-1 p-1 border rounded text-xs" onChange={e=>setCustomEnd(e.target.value)}/></div>}
                             <div className="flex items-center gap-2 mt-1"><input type="radio" checked={dateRange==='custom'} onChange={()=>setDateRange('custom')}/><label className="text-xs text-slate-500">Custom</label></div>
                         </Card>
@@ -264,139 +296,124 @@
                     
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <Card className="lg:col-span-2 p-6">
-                            <h3 className="font-bold mb-4 flex gap-2"><PieChart size={20} className="text-blue-600"/> Analysis</h3>
+                            <div className="flex flex-col gap-3 mb-4">
+                                <div className="flex justify-between items-center"><h3 className="font-bold flex gap-2"><PieChart size={20} className="text-blue-600"/> Analysis</h3><div className="flex gap-1 bg-slate-100 p-1 rounded-lg">{['category','account'].map(g=><button key={g} onClick={()=>setAnalysisGroupBy(g)} className={`px-3 py-1 text-xs rounded-md capitalize ${analysisGroupBy===g?'bg-white shadow text-blue-600 font-bold':'text-slate-500'}`}>{g}</button>)}</div></div>
+                                <div className="flex gap-2 text-xs">{['combined','expense','income'].map(v=><button key={v} onClick={()=>setAnalysisViewType(v)} className={`px-3 py-1 rounded-full border transition-colors capitalize ${analysisViewType===v ? (v==='expense'?'bg-red-50 border-red-200 text-red-700 font-bold':v==='income'?'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold':'bg-slate-100 border-slate-200 text-slate-700 font-bold') : 'border-transparent text-slate-500 hover:bg-slate-50'}`}>{v === 'combined' ? 'All' : v}</button>)}</div>
+                            </div>
                             <div className="h-64 w-full">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={dashboardChartData} layout="vertical" margin={{top:5,right:60,left:40,bottom:5}}><CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false}/><XAxis type="number" hide/><YAxis type="category" dataKey="name" width={100} tick={{fontSize:12}}/><Tooltip formatter={(v)=>`฿${v.toLocaleString()}`}/><Bar dataKey="amount" radius={[0,4,4,0]} barSize={30}>{dashboardChartData.map((e,i)=><Cell key={i} fill={e.fill}/>)}<LabelList dataKey="amount" position="right" formatter={(v)=>`฿${v.toLocaleString()}`} style={{fontSize:12, fontWeight:'bold', fill:'#475569'}}/></Bar></BarChart>
-                                </ResponsiveContainer>
+                                {dashboardChartData.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height="100%"><BarChart data={dashboardChartData} layout="vertical" margin={{top:5,right:50,left:40,bottom:5}}>
+                                        <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false}/><XAxis type="number" hide/><YAxis type="category" dataKey="name" width={100} tick={{fontSize:12}}/><Tooltip formatter={(v)=>`฿${v.toLocaleString()}`}/><Legend verticalAlign="top" height={36}/>
+                                        {(analysisViewType === 'combined' || analysisViewType === 'income') && <Bar dataKey="income" name="Income" fill="#047857" radius={[0,4,4,0]} barSize={20}><LabelList dataKey="income" position="right" formatter={(v)=>v>0?`฿${v.toLocaleString()}`:''} style={{fontSize:10,fill:'#047857',fontWeight:'bold'}}/></Bar>}
+                                        {(analysisViewType === 'combined' || analysisViewType === 'expense') && <Bar dataKey="expense" name="Expense" fill="#b91c1c" radius={[0,4,4,0]} barSize={20}><LabelList dataKey="expense" position="right" formatter={(v)=>v>0?`฿${v.toLocaleString()}`:''} style={{fontSize:10,fill:'#b91c1c',fontWeight:'bold'}}/></Bar>}
+                                    </BarChart></ResponsiveContainer>
+                                ) : <div className="h-full flex items-center justify-center text-slate-400">No Data</div>}
                             </div>
                         </Card>
+
                         <Card className="p-6 bg-slate-50 border-blue-100">
-                            <h3 className="font-bold mb-4 flex gap-2"><Plus size={20} className="text-green-600"/> Add Transaction</h3>
+                            <h3 className="font-bold mb-4 flex gap-2"><Plus size={20} className="text-slate-700"/> New Transaction</h3>
                             <form onSubmit={handleAddTx} className="space-y-3">
-                                <select required className="w-full p-2 border rounded" value={newTx.cardId} onChange={e=>setNewTx({...newTx,cardId:e.target.value})}><option value="">Select Card...</option>{cards.map(c=><option key={c.id} value={c.id}>{c.name} ({c.number})</option>)}</select>
+                                <div className="flex gap-2"><Button className="flex-1 py-2 text-sm" variant={newTx.type==='expense'?'activeExpense':'expense'} onClick={()=>setNewTx({...newTx, type:'expense'})}>Expense</Button><Button className="flex-1 py-2 text-sm" variant={newTx.type==='income'?'activeIncome':'income'} onClick={()=>setNewTx({...newTx, type:'income'})}>Income</Button></div>
+                                <div className="grid grid-cols-2 gap-2"><select className="w-full p-2 border rounded text-sm" value={newTx.cardId} onChange={e=>setNewTx({...newTx,cardId:e.target.value})}><option value="">Card (or Cash)</option>{cards.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><select className="w-full p-2 border rounded text-sm" value={newTx.categoryId} onChange={e=>setNewTx({...newTx,categoryId:e.target.value})}><option value="">Category (Opt)...</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
                                 <div className="grid grid-cols-2 gap-2"><input type="date" required className="w-full p-2 border rounded" value={newTx.date} onChange={e=>setNewTx({...newTx,date:e.target.value})}/><input type="time" required className="w-full p-2 border rounded" value={newTx.time} onChange={e=>setNewTx({...newTx,time:e.target.value})}/></div>
-                                <input type="number" required step="0.01" className="w-full p-2 border rounded text-lg font-bold text-blue-700" placeholder="0.00" value={newTx.amount} onChange={e=>setNewTx({...newTx,amount:e.target.value})}/>
+                                <input type="number" required step="0.01" className={`w-full p-2 border rounded text-lg font-bold ${newTx.type==='income'?'text-emerald-700':'text-red-700'}`} placeholder="0.00" value={newTx.amount} onChange={e=>setNewTx({...newTx,amount:e.target.value})}/>
                                 <input type="text" className="w-full p-2 border rounded text-sm" placeholder="Note..." value={newTx.note} onChange={e=>setNewTx({...newTx,note:e.target.value})}/>
-                                <Button type="submit" disabled={!user} className="w-full mt-2">{user?'Save':'Login First'}</Button>
+                                <Button type="submit" disabled={!user} className="w-full mt-2 bg-slate-800 hover:bg-slate-900 text-white">{user?'Save Record':'Login First'}</Button>
                             </form>
                         </Card>
                     </div>
 
-                    <Card className="p-0 overflow-hidden">
-                        <div className="p-4 bg-slate-50 border-b flex justify-between items-center"><h3 className="font-bold flex gap-2"><List size={18}/> Recent</h3><select className="p-1 border rounded text-xs" onChange={e=>setDashboardCardFilter(e.target.value)}><option value="all">All Cards</option>{cards.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                        <div className="max-h-[500px] overflow-y-auto">
-                            {filteredTransactions.length===0 ? <div className="text-center py-8 text-slate-400">No Data</div> : 
-                            <div className="divide-y divide-slate-100">
-                                {filteredTransactions.map(tx => {
-                                    const card = cards.find(c => c.id === tx.cardId);
-                                    const dateObj = new Date(tx.date);
-                                    const dateStr = dateObj.toLocaleDateString('th-TH', {day:'numeric',month:'short',year:'2-digit'}); // แสดงปีด้วย
-                                    return (
-                                        <div key={tx.id} className="bg-white hover:bg-slate-50 p-4 flex justify-between items-center gap-3">
-                                            <div className="flex items-center gap-3 md:gap-6 flex-1 overflow-hidden">
-                                                <div className="text-sm text-slate-500 whitespace-nowrap min-w-[100px]">{dateStr} <span className="text-xs text-slate-400">{tx.time}</span></div>
-                                                {card ? <div className="px-3 py-1 rounded-full text-sm text-white shadow-sm font-medium whitespace-nowrap" style={{backgroundColor:card.color}}>{card.name} <span className="opacity-80 font-normal">({card.number})</span></div> : <div className="text-sm text-slate-300">N/A</div>}
-                                                <div className="text-base text-slate-700 truncate flex-1 font-medium">{tx.note}</div>
+                    <div className="space-y-2">
+                        <Card className="p-0 overflow-hidden">
+                            <div className="p-4 bg-white border-b flex justify-between items-center"><h3 className="font-bold flex gap-2"><List size={18}/> Recent Transactions</h3><div className="flex gap-2"><select className="p-1 border rounded text-xs" onChange={e=>setDashboardCardFilter(e.target.value)} value={dashboardCardFilter}><option value="all">All Cards</option>{cards.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div></div>
+                            <div className="max-h-[500px] overflow-y-auto">
+                                {filteredTx.length===0 ? <div className="text-center py-8 text-slate-400">No Data</div> : 
+                                <div className="divide-y divide-slate-100">
+                                    {filteredTx.map(tx => {
+                                        const card = cards.find(c => c.id === tx.cardId);
+                                        const cat = categories.find(c => c.id === tx.categoryId);
+                                        const dateStr = new Date(tx.date).toLocaleDateString(undefined, {day:'numeric',month:'short',year:'2-digit'});
+                                        const isInc = tx.type === 'income';
+                                        const cardName = card ? card.name : 'Cash';
+                                        const cardColor = card ? card.color : '#64748b';
+                                        return (
+                                            <div key={tx.id} className="bg-white hover:bg-slate-50 p-3 grid grid-cols-[1.2fr_1.2fr_1.2fr_2fr_1fr] gap-4 items-center text-sm">
+                                                <div className="text-slate-500 text-xs font-medium">{dateStr} <span className="text-slate-400">{tx.time}</span></div>
+                                                <div><div className="text-[10px] px-2 py-0.5 rounded text-white shadow-sm font-medium w-fit truncate" style={{backgroundColor: cardColor}}>{cardName} {card && card.number ? `(${card.number.slice(-4)})` : ''}</div></div>
+                                                <div><div className="text-[10px] px-2 py-0.5 rounded text-white shadow-sm font-medium w-fit truncate" style={{backgroundColor:getColorForCategory(cat?.name)}}>{cat ? cat.name : 'General'}</div></div>
+                                                <div className="text-slate-700 truncate text-xs">{tx.note || '-'}</div>
+                                                <div className="flex items-center justify-end gap-2"><span className={`font-bold whitespace-nowrap ${isInc ? 'text-emerald-700' : 'text-red-700'}`}>{isInc?'+':'-'}{parseFloat(tx.amount).toLocaleString()}</span><button onClick={(e)=>handleDeleteTx(tx.id, e)} className="text-slate-300 hover:text-red-500"><Trash2 size={16}/></button></div>
                                             </div>
-                                            <div className="flex items-center gap-4">
-                                                <div className="font-bold text-lg text-slate-800 whitespace-nowrap">{parseFloat(tx.amount).toLocaleString()}</div>
-                                                <button onClick={()=>handleDeleteTx(tx.id)} className="p-2 text-slate-300 hover:text-red-500 rounded-full transition-all"><Trash2 size={20}/></button>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>}
-                        </div>
-                    </Card>
+                                        )
+                                    })}
+                                </div>}
+                            </div>
+                        </Card>
+                    </div>
                 </div>
             );
 
             const renderHistory = () => (
                 <div className="space-y-6">
-                    <Card className="p-4 flex gap-4 overflow-x-auto">
-                        <div className="flex gap-2">{['week','month','year','custom'].map(r=><button key={r} onClick={()=>setHistoryRange(r)} className={`px-3 py-1 rounded text-sm capitalize ${historyRange===r?'bg-blue-100 text-blue-700 font-bold':'text-slate-500'}`}>{r}</button>)}</div>
-                        {historyRange==='custom' && <div className="flex gap-2"><input type="date" className="border rounded p-1 text-xs" onChange={e=>setHistoryStart(e.target.value)}/><input type="date" className="border rounded p-1 text-xs" onChange={e=>setHistoryEnd(e.target.value)}/></div>}
-                    </Card>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Card className="p-6 bg-slate-800 text-white border-none flex justify-between"><div><p className="text-slate-400 text-sm">Total History</p><h2 className="text-4xl font-bold mt-1">฿{historyTotal.toLocaleString()}</h2></div><TrendingUp size={32} className="text-green-400"/></Card>
-                        <Card className="p-6 flex justify-between"><div><p className="text-slate-500 text-sm">Average</p><h2 className="text-3xl font-bold mt-1 text-slate-700">฿{(historyData.length>0?historyTotal/historyData.length:0).toLocaleString(undefined,{maximumFractionDigits:0})}</h2></div><PieChart size={32} className="text-blue-500"/></Card>
-                    </div>
-                    <Card className="p-6"><div className="h-80 w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={historyData} margin={{top:20,right:30,left:20,bottom:5}}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="name" stroke="#94a3b8" fontSize={12}/><YAxis stroke="#94a3b8" fontSize={12} tickFormatter={(v)=>`฿${v/1000}k`}/><Tooltip formatter={(v)=>`฿${v.toLocaleString()}`}/><Legend/>{cards.map(c=>(historyCardFilter==='all'||historyCardFilter===c.id)&&<Bar key={c.id} dataKey={c.name} stackId="a" fill={c.color} name={c.name}/>)}</BarChart></ResponsiveContainer></div></Card>
-                </div>
-            );
-
-            const renderCards = () => (
-                <div className="max-w-2xl mx-auto space-y-6">
-                    <Card className="p-6">
-                        <h2 className="font-bold mb-4 flex gap-2"><CreditCard className="text-blue-600"/> Manage Cards</h2>
-                        <form onSubmit={handleAddCard} className="flex gap-2 items-end border-b pb-6 mb-6">
-                            <div className="flex-1"><label className="text-xs">Card Name</label><input required className="w-full p-2 border rounded" value={newCard.name} onChange={e=>setNewCard({...newCard,name:e.target.value})} placeholder="e.g. KBank"/></div>
-                            <div className="w-24"><label className="text-xs">Last 4</label><input required maxLength="4" className="w-full p-2 border rounded text-center" value={newCard.number} onChange={e=>setNewCard({...newCard,number:e.target.value})} placeholder="8888"/></div>
-                            <Button type="submit" disabled={!user} variant="success"><Plus size={18}/></Button>
-                        </form>
-                        <div className="space-y-3">
-                            {cards.map(card => (
-                                <div key={card.id} className="flex justify-between items-center p-4 bg-slate-50 rounded border">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-8 rounded shadow-sm" style={{backgroundColor:card.color}}></div>
-                                        <div><h4 className="font-bold text-slate-700">{card.name}</h4><p className="text-xs text-slate-500">xxxx-{card.number}</p></div>
-                                    </div>
-                                    <button onClick={()=>handleDeleteCard(card.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={18}/></button>
-                                </div>
-                            ))}
+                    <Card className="p-4 flex flex-col gap-3">
+                        <div className="flex gap-2 overflow-x-auto">{['week','month','year','custom'].map(r=><button key={r} onClick={()=>setHistoryRange(r)} className={`px-3 py-1 rounded text-sm capitalize ${historyRange===r?'bg-blue-100 text-blue-700 font-bold':'text-slate-500'}`}>{r}</button>)}</div>
+                        <div className="flex justify-between items-center border-t pt-2">
+                            <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+                                <button onClick={()=>setHistoryViewMode('total')} className={`px-3 py-1 text-xs rounded-md ${historyViewMode==='total'?'bg-white shadow text-blue-600 font-bold':'text-slate-500'}`}>Overview</button>
+                                <button onClick={()=>setHistoryViewMode('expense_breakdown')} className={`px-3 py-1 text-xs rounded-md ${historyViewMode==='expense_breakdown'?'bg-white shadow text-red-600 font-bold':'text-slate-500'}`}>Exp Breakdown</button>
+                                <button onClick={()=>setHistoryViewMode('income_breakdown')} className={`px-3 py-1 text-xs rounded-md ${historyViewMode==='income_breakdown'?'bg-white shadow text-emerald-600 font-bold':'text-slate-500'}`}>Inc Breakdown</button>
+                            </div>
+                            {historyRange==='custom'&&<div className="flex gap-2"><input type="date" className="border rounded p-1 text-xs" onChange={e=>setHistoryStart(e.target.value)}/><input type="date" className="border rounded p-1 text-xs" onChange={e=>setHistoryEnd(e.target.value)}/></div>}
                         </div>
                     </Card>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Card className="p-6 bg-emerald-50 border-emerald-200 flex justify-between"><div><p className="text-emerald-700 text-sm">Income</p><h2 className="text-4xl font-bold mt-1 text-emerald-800">฿{historyTotal.income.toLocaleString()}</h2></div><TrendingUp size={32} className="text-emerald-500"/></Card><Card className="p-6 bg-red-50 border-red-200 flex justify-between"><div><p className="text-red-700 text-sm">Expense</p><h2 className="text-4xl font-bold mt-1 text-red-800">฿{historyTotal.expense.toLocaleString()}</h2></div><TrendingUp size={32} className="text-red-500"/></Card></div>
+                    <Card className="p-6"><h3 className="font-bold mb-4">Trend: {historyViewMode==='total' ? 'Income vs Expense' : historyViewMode==='expense_breakdown' ? 'Expense by Category' : 'Income by Category'}</h3><div className="h-80 w-full"><ResponsiveContainer>
+                        <BarChart key={historyViewMode} data={historyData} margin={{top:30,right:30,left:20,bottom:20}}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="name"/><XAxis xAxisId="1" dataKey="name" hide /><YAxis domain={[0, 'auto']}/><Tooltip/><Legend verticalAlign="top"/>
+                            {historyViewMode === 'total' ? (
+                                [
+                                    <Bar key="income" dataKey="income" name="Income" fill="#047857" radius={[4,4,0,0]}><LabelList dataKey="income" position="top" formatter={formatCurrencyShort} style={{fontSize:10,fill:'#047857',fontWeight:'bold'}}/></Bar>,
+                                    <Bar key="expense" dataKey="expense" name="Expense" fill="#b91c1c" radius={[4,4,0,0]}><LabelList dataKey="expense" position="top" formatter={formatCurrencyShort} style={{fontSize:10,fill:'#b91c1c',fontWeight:'bold'}}/></Bar>
+                                ]
+                            ) : (
+                                [
+                                    ...categories.map(cat => (<Bar key={cat.id} dataKey={cat.name} stackId="a" fill={getColorForCategory(cat.name)}>
+                                        {/* ✅ Fix: Check height > 15px instead of value calculation for robustness */}
+                                        <LabelList dataKey={cat.name} position="center" content={(props) => {
+                                            const { x, y, width, height, value } = props;
+                                            if (height < 15) return null; // Only show if bar is tall enough
+                                            return <text x={x+width/2} y={y+height/2+3} fill="#fff" textAnchor="middle" fontSize={9} fontWeight="bold" style={{textShadow:'0 0 2px black'}}>{formatCurrencyShort(value)}</text>;
+                                        }}/>
+                                    </Bar>)),
+                                    <Bar key="general" dataKey="General" stackId="a" fill="#94a3b8"><LabelList dataKey="General" position="center" content={(props) => {
+                                        const { x, y, width, height, value } = props;
+                                        if (height < 15) return null;
+                                        return <text x={x+width/2} y={y+height/2+3} fill="#fff" textAnchor="middle" fontSize={9} fontWeight="bold" style={{textShadow:'0 0 2px black'}}>{formatCurrencyShort(value)}</text>;
+                                    }}/></Bar>,
+                                    // ✅ Fix: Total Label placed perfectly on top using transparent bar with offset 35
+                                    <Bar key="total" xAxisId="1" dataKey="totalStack" fill="transparent" legendType="none" barSize={40}><LabelList position="top" formatter={formatCurrencyShort} offset={35} style={{fontSize:12, fill:'#333', fontWeight:'bold'}}/></Bar>
+                                ]
+                            )}
+                        </BarChart>
+                    </ResponsiveContainer></div></Card>
                 </div>
             );
 
-            const renderSettings = () => (
-                <div className="max-w-xl mx-auto space-y-4">
-                    <Card className="p-6">
-                        <h2 className="font-bold mb-4 flex gap-2"><User className="text-blue-600"/> Profile</h2>
-                        {user ? 
-                            <div className="flex justify-between items-center">
-                                <div className="flex gap-3 items-center">{user.photoURL?<img src={user.photoURL} className="w-10 h-10 rounded-full"/>:<div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600"><User size={20}/></div>}<div><p className="font-bold">{user.displayName||'User'}</p><p className="text-xs text-slate-500">{user.email}</p></div></div>
-                                <Button onClick={handleLogout} variant="danger" className="text-xs py-2 px-3"><LogOut size={16}/> Logout</Button>
-                            </div> 
-                            : 
-                            <Button onClick={handleGoogleLogin} variant="google" className="w-full flex justify-center gap-3">Sign in with Google</Button>
-                        }
-                    </Card>
-                    <Card className="p-6">
-                        <h2 className="font-bold mb-4 flex gap-2"><FileSpreadsheet className="text-green-600"/> Export Data</h2>
-                        <Button onClick={exportToExcel} disabled={isExporting} variant="success" className="w-full">{isExporting ? <Loader className="animate-spin" size={18}/> : <Download size={18}/>} Export .xlsx</Button>
-                    </Card>
-                </div>
-            );
+            // ... (Categories, Cards, Settings sections remain same) ...
+            const renderCategories = () => (<div className="max-w-2xl mx-auto space-y-6"><Card className="p-6"><h2 className="font-bold mb-4 flex gap-2"><Tags className="text-blue-600"/> Manage Categories</h2><form onSubmit={handleAddCat} className="flex gap-2 items-end border-b pb-6 mb-6"><div className="flex-1"><label className="text-xs">Category Name</label><input required className="w-full p-2 border rounded" value={newCategory.name} onChange={e=>setNewCategory({...newCategory,name:e.target.value})}/></div><Button type="submit" disabled={!user} variant="success"><Plus size={18}/></Button></form><div className="grid grid-cols-2 gap-3">{categories.map(cat=><div key={cat.id} className="flex justify-between items-center p-3 bg-slate-50 rounded border"><div className="font-medium text-slate-700 flex items-center gap-2"><span className="w-3 h-3 rounded-full" style={{backgroundColor:getColorForCategory(cat.name)}}></span>{cat.name}</div><button type="button" onClick={(e)=>handleDeleteCat(cat.id,e)} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button></div>)}</div></Card></div>);
+            const renderCards = () => (<div className="max-w-2xl mx-auto space-y-6"><Card className="p-6"><h2 className="font-bold mb-4 flex gap-2"><CreditCard className="text-blue-600"/> Manage Accounts</h2><form onSubmit={handleAddCard} className="flex gap-2 items-end border-b pb-6 mb-6"><div className="flex-1"><label className="text-xs">Account Name</label><input required className="w-full p-2 border rounded" value={newCard.name} onChange={e=>setNewCard({...newCard,name:e.target.value})}/></div><div className="w-24"><label className="text-xs">Last 4</label><input maxLength="4" className="w-full p-2 border rounded text-center" value={newCard.number} onChange={e=>setNewCard({...newCard,number:e.target.value})}/></div><Button type="submit" disabled={!user} variant="success"><Plus size={18}/></Button></form><div className="space-y-3">{cards.map(c=><div key={c.id} className="flex justify-between items-center p-4 bg-slate-50 rounded border"><div className="flex items-center gap-4"><div className="w-12 h-8 rounded shadow-sm" style={{backgroundColor:c.color}}></div><div><h4 className="font-bold text-slate-700">{c.name}</h4><p className="text-xs text-slate-500">{c.number?`xxxx-${c.number}`:'Cash'}</p></div></div><button type="button" onClick={(e)=>handleDeleteCard(c.id,e)} className="text-slate-400 hover:text-red-500"><Trash2 size={18}/></button></div>)}</div></Card></div>);
+            const renderSettings = () => (<div className="max-w-xl mx-auto space-y-4"><Card className="p-6"><h2 className="font-bold mb-4 flex gap-2"><User className="text-blue-600"/> Profile</h2>{user?<div className="flex flex-col gap-4"><div className="flex items-center gap-3"><div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600"><User size={24}/></div><div><p className="font-bold text-lg">{user.isAnonymous?'Guest':user.displayName}</p><p className="text-sm text-slate-500">{user.email}</p></div></div><Button onClick={handleLogout} variant="danger" className="text-sm"><LogOut size={16}/> Logout</Button></div>:<div className="space-y-3"><Button onClick={()=>handleLogin('google')} variant="google" className="w-full flex justify-center gap-3">Sign in with Google</Button></div>}</Card><Card className="p-6"><h2 className="font-bold mb-4 flex gap-2"><FileSpreadsheet className="text-green-600"/> Data</h2><Button onClick={exportExcel} disabled={isExporting} variant="success" className="w-full">{isExporting?<Loader className="animate-spin" size={18}/>:<Download size={18}/>} Export Excel (.xls)</Button></Card></div>);
 
-            // Main Render
             return (
                 <div className="min-h-screen pb-20 md:pb-0">
-                    <header className="bg-white shadow-sm sticky top-0 z-10">
-                        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
-                            <h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><DollarSign/> Smart Expense <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded-full">Cloud</span></h1>
-                            <nav className="hidden md:flex gap-1 bg-slate-100 p-1 rounded-lg">
-                                {['dashboard','history','cards','settings'].map(t=><button key={t} onClick={()=>setActiveTab(t)} className={`px-4 py-2 rounded-md text-sm capitalize ${activeTab===t?'bg-white text-blue-700 shadow-sm font-bold':'text-slate-500'}`}>{t}</button>)}
-                            </nav>
-                        </div>
-                    </header>
-                    <main className="max-w-6xl mx-auto px-4 py-6">
-                        {activeTab==='dashboard' && renderDashboard()}
-                        {activeTab==='history' && renderHistory()}
-                        {activeTab==='cards' && renderCards()}
-                        {activeTab==='settings' && renderSettings()}
-                    </main>
-                    <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 z-20 safe-area-bottom">
-                        {['dashboard','history','cards','settings'].map(t=><button key={t} onClick={()=>setActiveTab(t)} className={`flex flex-col items-center p-2 ${activeTab===t?'text-blue-600':'text-slate-400'}`}>{t==='dashboard'?<PieChart size={24}/>:t==='history'?<History size={24}/>:t==='cards'?<CreditCard size={24}/>:<Bell size={24}/>}<span className="text-[10px] mt-1 capitalize">{t}</span></button>)}
-                    </div>
+                    <header className="bg-white shadow-sm sticky top-0 z-10"><div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center"><h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><DollarSign/> Smart Income / Expense <span className="text-xs font-normal text-slate-400 bg-slate-100 px-2 py-1 rounded-full">Cloud 5.0</span></h1><nav className="hidden md:flex gap-1 bg-slate-100 p-1 rounded-lg">{['dashboard','history','categories','cards','settings'].map(t=><button key={t} onClick={()=>setActiveTab(t)} className={`px-3 py-2 rounded-md text-sm capitalize ${activeTab===t?'bg-white text-blue-700 shadow-sm font-bold':'text-slate-500'}`}>{t}</button>)}</nav></div></header>
+                    <main className="max-w-6xl mx-auto px-4 py-6">{activeTab==='dashboard'&&renderDashboard()}{activeTab==='history'&&renderHistory()}{activeTab==='categories'&&renderCategories()}{activeTab==='cards'&&renderCards()}{activeTab==='settings'&&renderSettings()}</main>
+                    <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 z-20 safe-area-bottom overflow-x-auto">{['dashboard','history','categories','cards','settings'].map(t=><button key={t} onClick={()=>setActiveTab(t)} className={`flex flex-col items-center p-2 min-w-[60px] ${activeTab===t?'text-blue-600':'text-slate-400'}`}>{t==='dashboard'?<PieChart size={24}/>:t==='history'?<History size={24}/>:t==='categories'?<Tags size={24}/>:t==='cards'?<CreditCard size={24}/>:<Bell size={24}/>}<span className="text-[10px] mt-1 capitalize">{t}</span></button>)}</div>
                 </div>
             );
         }
-
-        // Mount App
-        const root = createRoot(document.getElementById('root'));
-        root.render(<CloudCreditCardManager />);
+        createRoot(document.getElementById('root')).render(<CloudCreditCardManager />);
     </script>
 </body>
 </html>
